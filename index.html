@@ -352,7 +352,7 @@ input[type="text"], input[type="password"] {
 .srow {
   display: grid;
   grid-template-columns: 26px minmax(0, 1fr) auto;
-  grid-template-areas: "no name avg" "crits crits crits";
+  grid-template-areas: "no name avg" "crits crits crits" "abs abs abs";
   align-items: center;
   gap: 10px;
   padding: 14px 14px 16px;
@@ -365,6 +365,23 @@ input[type="text"], input[type="password"] {
 .crits { grid-area: crits; display: grid; gap: 8px; }
 .crit { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .clabel { min-width: 0; font-size: 13.5px; color: var(--ink-2); }
+.sabs { grid-area: abs; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.abs-input {
+  width: 64px;
+  height: 40px;
+  padding: 0 6px;
+  border: 1px solid var(--rule-2);
+  border-radius: 9px;
+  background: var(--sheet);
+  color: var(--ink);
+  font-size: 16px;
+  font-weight: 600;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.abs-input:disabled { opacity: 0.5; }
+.abs-input::placeholder { color: var(--ink-3); font-weight: 400; }
+.abs-num { font-weight: 700; font-variant-numeric: tabular-nums; color: var(--ink-2); }
 .seg { display: flex; flex: none; gap: 5px; }
 .seg button {
   width: 40px;
@@ -396,9 +413,9 @@ input[type="text"], input[type="password"] {
 @media (min-width: 1000px) {
   .rhead, .srow {
     display: grid;
-    grid-template-columns: 30px minmax(150px, 1.2fr) repeat(5, minmax(118px, 1fr)) 64px;
+    grid-template-columns: 30px minmax(150px, 1.2fr) repeat(5, minmax(108px, 1fr)) 64px 64px;
     grid-template-areas: none;
-    column-gap: 14px;
+    column-gap: 10px;
     align-items: center;
   }
   .rhead {
@@ -416,15 +433,17 @@ input[type="text"], input[type="password"] {
     line-height: 1.25;
     text-transform: uppercase;
   }
-  .rhead span:last-child { text-align: center; }
+  .rhead span:nth-last-child(-n+2) { text-align: center; }
   .srow { padding: 7px 14px; }
   .srow:hover { background: var(--sheet-2); }
-  .sno, .sname, .savg { grid-area: auto; }
+  .sno, .sname, .savg, .sabs { grid-area: auto; }
   .crits { display: contents; }
   .clabel { display: none; }
   .seg { width: 100%; gap: 4px; }
   .seg button { flex: 1 1 0; width: auto; min-width: 0; height: 32px; border-radius: 7px; font-size: 14.5px; }
   .savg { text-align: center; }
+  .sabs { justify-content: center; }
+  .abs-input { width: 100%; max-width: 58px; height: 32px; border-radius: 7px; font-size: 14.5px; }
 }
 
 /* Psychologist notes */
@@ -646,20 +665,37 @@ function mean(values) {
 function fmtAvg(x) {
   return x == null ? "—" : (Math.round(x * 100 + 1e-9) / 100).toFixed(2).replace(".", ",");
 }
+/* Absences (missed lessons) in one subject for the month: a whole number 0–999, or null when not entered. */
+function cleanAbs(v) {
+  if (v === "" || v == null) return null;
+  const n = Math.floor(Number(v));
+  return isFinite(n) && n >= 0 && n <= 999 ? n : null;
+}
+/* A full entry: 5 marks in CRITERIA order, then the absence count ("" when not entered). */
+function cleanEntry(arr) {
+  const a = cleanAbs(Array.isArray(arr) ? arr[5] : null);
+  return cleanMarks(arr).concat([a == null ? "" : a]);
+}
+function fmtAbs(x) {
+  return x == null ? "—" : String(x);
+}
 
-/* marks: { [subjectId]: [a,h,i,n,d] } for one student */
+/* marks: { [subjectId]: [a,h,i,n,d, absences?] } for one student */
 function summarize(subjects, marks) {
   const rows = subjects.map(function (s) {
-    const vals = cleanMarks(marks && marks[s.id]);
-    return { subject: s, vals: vals, avg: mean(vals), filled: vals.filter(Boolean).length };
+    const raw = marks && marks[s.id];
+    const vals = cleanMarks(raw);
+    return { subject: s, vals: vals, avg: mean(vals), abs: cleanAbs(Array.isArray(raw) ? raw[5] : null), filled: vals.filter(Boolean).length };
   });
   const critAvg = CRITERIA.map(function (c, k) { return mean(rows.map(function (r) { return r.vals[k]; })); });
   const all = [];
   rows.forEach(function (r) { r.vals.forEach(function (v) { all.push(v); }); });
+  const absRows = rows.filter(function (r) { return r.abs != null; });
   return {
     rows: rows,
     critAvg: critAvg,
     overall: mean(all),
+    absTotal: absRows.length ? absRows.reduce(function (s, r) { return s + r.abs; }, 0) : null,
     complete: rows.filter(function (r) { return r.filled === 5; }).length,
     started: rows.filter(function (r) { return r.filled > 0; }).length,
     total: rows.length
@@ -757,7 +793,7 @@ function protocolDocDefinition(info, students) {
     const body = [[
       th("№", true),
       Object.assign(th("Fənn", true), { alignment: "left" })
-    ].concat(CRITERIA.map(function (c) { return th(c.head, c.head.indexOf("\n") < 0); }), [th("Orta\nbal", false)])];
+    ].concat(CRITERIA.map(function (c) { return th(c.head, c.head.indexOf("\n") < 0); }), [th("Orta\nbal", false), th("Qayıb\nsayı", false)])];
 
     sum.rows.forEach(function (r, i) {
       body.push([
@@ -765,16 +801,22 @@ function protocolDocDefinition(info, students) {
         { text: r.subject.name, fontSize: tight ? 9.5 : 10 }
       ].concat(r.vals.map(function (v) {
         return v ? { text: String(v), alignment: "center", fontSize: 11 } : { text: "—", alignment: "center", color: SOFT };
-      }), [{ text: fmtAvg(r.avg), alignment: "center", bold: true, color: r.avg == null ? SOFT : INK }]));
+      }), [
+        { text: fmtAvg(r.avg), alignment: "center", bold: true, color: r.avg == null ? SOFT : INK },
+        { text: fmtAbs(r.abs), alignment: "center", fontSize: 10.5, color: r.abs == null ? SOFT : INK }
+      ]));
     });
     body.push([
-      { text: "Göstərici üzrə orta bal", colSpan: 2, bold: true, fontSize: 9, fillColor: FILL, margin: [0, 1, 0, 0] },
+      { text: "Göstərici üzrə orta bal / qayıb cəmi", colSpan: 2, bold: true, fontSize: 8.5, fillColor: FILL, margin: [0, 1, 0, 0] },
       {}
     ].concat(sum.critAvg.map(function (a) {
       return { text: fmtAvg(a), alignment: "center", bold: true, fontSize: 9.5, fillColor: FILL, color: a == null ? SOFT : INK };
-    }), [{ text: fmtAvg(sum.overall), alignment: "center", bold: true, fontSize: 10.5, fillColor: FILL2 }]));
+    }), [
+      { text: fmtAvg(sum.overall), alignment: "center", bold: true, fontSize: 10.5, fillColor: FILL2 },
+      { text: fmtAbs(sum.absTotal), alignment: "center", bold: true, fontSize: 10.5, fillColor: FILL2, color: sum.absTotal == null ? SOFT : INK }
+    ]));
 
-    b.push({ table: { headerRows: 1, dontBreakRows: true, widths: [14, "*", 52, 52, 52, 52, 56, 44], body: body }, layout: gridLayout });
+    b.push({ table: { headerRows: 1, dontBreakRows: true, widths: [14, "*", 48, 48, 48, 48, 52, 42, 40], body: body }, layout: gridLayout });
 
     b.push({
       columns: [
@@ -788,7 +830,7 @@ function protocolDocDefinition(info, students) {
           ]
         },
         {
-          width: 140,
+          width: 120,
           table: {
             widths: ["*"],
             body: [[{
@@ -801,9 +843,24 @@ function protocolDocDefinition(info, students) {
             }]]
           },
           layout: box
+        },
+        {
+          width: 120,
+          table: {
+            widths: ["*"],
+            body: [[{
+              alignment: "center",
+              stack: [
+                { text: "YEKUN QAYIB SAYI", fontSize: 7.5, bold: true, characterSpacing: 0.6, color: MUTED },
+                { text: fmtAbs(sum.absTotal), fontSize: 24, bold: true, color: sum.absTotal == null ? SOFT : INK, margin: [0, 2, 0, 0] },
+                { text: "buraxılmış dərs", fontSize: 7.5, color: MUTED }
+              ]
+            }]]
+          },
+          layout: box
         }
       ],
-      columnGap: 18,
+      columnGap: 14,
       margin: [0, tight ? 8 : 10, 0, tight ? 8 : 10]
     });
 
@@ -833,7 +890,7 @@ function protocolDocDefinition(info, students) {
       return { stack: parts, unbreakable: true, margin: [0, 0, 0, bottom] };
     }
     const spaceAfter = tight ? 8 : 12;
-    b.push(notesBlock("PSİXOLOQ QEYDLƏRİ", note, Math.max(1, Math.min(3, 3 - noteLines - Math.floor(extra / 3))), "Psixoloq:", spaceAfter));
+    b.push(notesBlock("PSİXOLOQ QEYDLƏRİ", note, Math.max(1, Math.min(3, 3 - noteLines - (extra >= 2 ? 1 : 0))), "Psixoloq:", spaceAfter));
     b.push(notesBlock("DİREKTORUN QEYDLƏRİ", dnote, Math.max(1, Math.min(2, 2 - dnoteLines)), "", spaceAfter + 2));
 
     b.push({
@@ -1365,7 +1422,7 @@ function renderGrade() {
     const grid = h("div", { class: "register", id: "register" });
     grid.append(h("div", { class: "rhead", "aria-hidden": "true" },
       [h("span", { text: "№" }), h("span", { text: "Şagird" })]
-        .concat(CRITERIA.map(function (c) { return h("span", { text: c.label }); }), [h("span", { text: "Orta" })])));
+        .concat(CRITERIA.map(function (c) { return h("span", { text: c.label }); }), [h("span", { text: "Orta" }), h("span", { text: "Qayıb" })])));
     cls.students.forEach(function (st, i) {
       grid.append(h("div", { class: "srow", "data-sid": st.id }, [
         h("span", { class: "sno", text: String(i + 1) }),
@@ -1379,10 +1436,21 @@ function renderGrade() {
               }))
           ]);
         })),
-        h("span", { class: "savg" }, h("span", { class: "avg", text: "—" }))
+        h("span", { class: "savg" }, h("span", { class: "avg", text: "—" })),
+        h("div", { class: "sabs" }, [
+          h("label", { class: "clabel", for: "abs-" + st.id, text: "Qayıb sayı (buraxılmış dərs)" }),
+          h("input", {
+            class: "abs-input", id: "abs-" + st.id, type: "text", inputmode: "numeric", maxlength: "3",
+            autocomplete: "off", placeholder: "—", "data-sid": st.id, "aria-label": "Qayıb sayı — " + st.name
+          })
+        ])
       ]));
     });
     grid.addEventListener("click", onGradeClick);
+    grid.addEventListener("input", onAbsInput);
+    grid.addEventListener("focusout", function (ev) {
+      if (ev.target.classList && ev.target.classList.contains("abs-input")) flush(gKey(S.month, S.cls, S.subject));
+    });
     v.replaceChildren(
       h("div", { class: "sheet-head" }, [
         h("div", { class: "sheet-title" }, [h("h2", { text: cls.name + " · " + S.subject }), h("p", { class: "meta", id: "gradeMeta" })]),
@@ -1394,7 +1462,7 @@ function renderGrade() {
       h("div", { class: "banner bad", id: "gradeBanner", hidden: true }),
       h("div", { class: "legend" }, [
         h("span", { class: "legend-scale" }, SCALE.map(function (s) { return h("span", { class: "lg", "data-g": s.v }, [h("b", { text: String(s.v) }), s.word]); })),
-        h("span", { class: "hint", text: "Qiyməti silmək üçün seçilmiş rəqəmə yenidən toxunun. Dəyişikliklər avtomatik yadda saxlanılır." })
+        h("span", { class: "hint", text: "Qiyməti silmək üçün seçilmiş rəqəmə yenidən toxunun. «Qayıb» xanasına bu ay sizin dərsinizdən neçə dəfə qayıb olduğunu yazın. Dəyişikliklər avtomatik yadda saxlanılır." })
       ]),
       grid
     );
@@ -1412,13 +1480,19 @@ function paintGrade() {
   let complete = 0;
   const rows = grid.querySelectorAll(".srow");
   rows.forEach(function (row) {
-    const vals = cleanMarks(value(key, row.dataset.sid));
+    const entry = cleanEntry(value(key, row.dataset.sid));
+    const vals = entry.slice(0, 5);
     row.querySelectorAll(".seg").forEach(function (seg, k) {
       seg.querySelectorAll("button").forEach(function (b) {
         b.setAttribute("aria-pressed", Number(b.dataset.v) === vals[k] ? "true" : "false");
         b.disabled = disabled;
       });
     });
+    const inp = row.querySelector(".abs-input");
+    if (inp) {
+      if (document.activeElement !== inp) inp.value = entry[5] === "" ? "" : String(entry[5]);
+      inp.disabled = disabled;
+    }
     const a = mean(vals);
     const chip = row.querySelector(".avg");
     chip.textContent = fmtAvg(a);
@@ -1449,10 +1523,20 @@ function onGradeClick(ev) {
   const key = gKey(S.month, S.cls, S.subject);
   const sid = row.dataset.sid;
   const k = Number(b.dataset.k), val = Number(b.dataset.v);
-  const vals = cleanMarks(value(key, sid)).slice();
-  vals[k] = vals[k] === val ? 0 : val;
-  queueEdit(key, sid, vals, 2500);
+  const entry = cleanEntry(value(key, sid));
+  entry[k] = entry[k] === val ? 0 : val;
+  queueEdit(key, sid, entry, 2500);
   paintGrade();
+}
+function onAbsInput(ev) {
+  const inp = ev.target;
+  if (!inp.classList || !inp.classList.contains("abs-input") || !S.cls || !S.subject) return;
+  const digits = inp.value.replace(/\D+/g, "").slice(0, 3);
+  if (digits !== inp.value) inp.value = digits;
+  const key = gKey(S.month, S.cls, S.subject);
+  const entry = cleanEntry(value(key, inp.dataset.sid));
+  entry[5] = digits === "" ? "" : Number(digits);
+  queueEdit(key, inp.dataset.sid, entry, 2500);
 }
 
 /* ---------- notes: psychologist and director ---------- */
@@ -1542,7 +1626,7 @@ function reportData(month, cls) {
     const marks = {};
     subs.forEach(function (s) {
       const pk = gKey(month, cls.name, s.id);
-      marks[s.id] = cleanMarks(has(S.pending[pk], st.id) ? S.pending[pk][st.id] : (r && r.grades[s.id] ? r.grades[s.id][st.id] : null));
+      marks[s.id] = cleanEntry(has(S.pending[pk], st.id) ? S.pending[pk][st.id] : (r && r.grades[s.id] ? r.grades[s.id][st.id] : null));
     });
     const note = has(S.pending[nk], st.id) ? S.pending[nk][st.id] : (r && r.notes ? r.notes[st.id] : "");
     const dnote = has(S.pending[dk], st.id) ? S.pending[dk][st.id] : (r && r.dnotes ? r.dnotes[st.id] : "");
@@ -1593,7 +1677,7 @@ function renderReports() {
 
   const thead = h("thead", {}, h("tr", {}, [h("th", { class: "c-no", text: "№" }), h("th", { text: "Şagird" })]
     .concat(subs.map(function (s) { return h("th", { class: "col-subj ta-c", text: s.name }); }),
-      [h("th", { class: "ta-c", text: "Ümumi orta" }), h("th", { class: "ta-r" }, h("span", { class: "sr", text: "Protokol" }))])));
+      [h("th", { class: "ta-c", text: "Ümumi orta" }), h("th", { class: "ta-c", text: "Qayıb" }), h("th", { class: "ta-r" }, h("span", { class: "sr", text: "Protokol" }))])));
   const tbody = h("tbody");
   rows.forEach(function (x, i) {
     const open = S.expanded.has(x.st.id);
@@ -1608,23 +1692,24 @@ function renderReports() {
       ]))
     ].concat(x.sum.rows.map(function (row) { return h("td", { class: "col-subj ta-c" }, avgChip(row.avg)); }), [
       h("td", { class: "ta-c" }, avgChip(x.sum.overall, true)),
+      h("td", { class: "ta-c" }, h("span", { class: "abs-num", text: fmtAbs(x.sum.absTotal) })),
       h("td", { class: "ta-r" }, h("button", {
         class: "btn small", type: "button", disabled: busy, "aria-label": x.st.name + " — protokolu PDF kimi yüklə",
         onclick: function () { exportPdf(x.st.id); }
       }, S.pdfBusy === x.st.id ? "Hazırlanır…" : [icon(), "PDF"]))
     ])));
-    if (open) tbody.append(h("tr", { class: "detail" }, h("td", { colspan: String(4 + subs.length) }, detailBlock(x))));
+    if (open) tbody.append(h("tr", { class: "detail" }, h("td", { colspan: String(5 + subs.length) }, detailBlock(x))));
   });
   v.replaceChildren(head, comp, h("div", { class: "tablewrap" }, h("table", { class: "rep" }, [thead, tbody])));
 }
 function detailBlock(x) {
   const mini = h("table", { class: "mini" }, [
     h("thead", {}, h("tr", {}, [h("th", { text: "Fənn" })]
-      .concat(CRITERIA.map(function (c) { return h("th", { class: "ta-c", text: c.label }); }), [h("th", { class: "ta-c", text: "Orta" })]))),
+      .concat(CRITERIA.map(function (c) { return h("th", { class: "ta-c", text: c.label }); }), [h("th", { class: "ta-c", text: "Orta" }), h("th", { class: "ta-c", text: "Qayıb" })]))),
     h("tbody", {}, x.sum.rows.map(function (row) {
       return h("tr", {}, [h("td", { text: row.subject.name })]
         .concat(row.vals.map(function (n) { return h("td", { class: "ta-c" }, n ? h("span", { class: "g", "data-g": n, text: String(n) }) : h("span", { class: "dash", text: "—" })); }),
-          [h("td", { class: "ta-c" }, avgChip(row.avg))]));
+          [h("td", { class: "ta-c" }, avgChip(row.avg)), h("td", { class: "ta-c" }, h("span", { class: row.abs == null ? "dash" : "abs-num", text: fmtAbs(row.abs) }))]));
     }))
   ]);
   return h("div", { class: "detail-inner" }, [
